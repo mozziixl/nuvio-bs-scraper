@@ -22,7 +22,7 @@ SESSION_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
-    "Referer": "https://brokensilenze.net/"
+    "Referer": "https://brokensilenze.net"
 }
 
 def clean_series_name(title_str: str) -> str:
@@ -74,10 +74,10 @@ def parse_catalog_page(url: str):
 @app.get("/manifest.json")
 def get_manifest():
     return {
-        "id": "community.brokensilenze.cinematicpro",
-        "version": "12.5.0",
+        "id": "community.brokensilenze.cleanprotocol",
+        "version": "14.0.0",
         "name": "BS Seamless Engine Pro",
-        "description": "True episodic structures with dynamic video extraction pipeline and VLC compatibility hooks.",
+        "description": "True episodic structures returning strict playable direct streaming URLs for VLC player.",
         "types": ["series"],
         "catalogs": [
             {
@@ -163,15 +163,15 @@ def get_meta(meta_id: str):
         }
     }
 
-# 3. STREAM ENDPOINT - ADVANCED EXTRACTOR WITH SECURE IN-APP HANDSHAKE
+# 3. STREAM ENDPOINT - SYNTAX CHECKED AND FULLY CLOSED
 @app.get("/stream/series/{video_id}.json")
 @app.get("/stream/series/{video_id}")
 def get_stream(video_id: str):
     clean_slug = video_id.replace(".json", "").replace("bs_playnode_", "")
     target_page_url = f"{BASE_URL}/{clean_slug}/"
     
-    collected_links = set()
-    iframe_links = []
+    direct_media_links = set()
+    embed_player_urls = []
     
     try:
         response = requests.get(target_page_url, headers=SESSION_HEADERS, timeout=10)
@@ -179,33 +179,47 @@ def get_stream(video_id: str):
             html_text = response.text
             soup = BeautifulSoup(html_text, "html.parser")
             
-            # Action 1: Extract visible video elements and source parameters
+            # Extract video/source tags
             for video in soup.find_all("video"):
                 v_src = video.get("src")
-                if v_src: collected_links.add(v_src)
-                    
+                if v_src: 
+                    direct_media_links.add(v_src)
             for source in soup.find_all("source"):
                 s_src = source.get("src")
-                if s_src: collected_links.add(s_src)
+                if s_src: 
+                    direct_media_links.add(s_src)
             
-            # Action 2: Extract embedded streaming frames safely
+            # Find iframe servers
             for iframe in soup.find_all("iframe"):
                 i_src = iframe.get("src")
-                if i_src:
-                    iframe_links.append(i_src)
+                if i_src: 
+                    embed_player_urls.append(i_src)
             
-            # Action 3: Deep string regex sweep fallback looking inside JS configurations
+            # Regex scan script blobs
             regex_matches = re.findall(r'(https?:?//[^\s"\']+\.(?:m3u8|mp4|webm)[^\s"\']*)', html_text)
             for match in regex_matches:
-                collected_links.add(match)
+                direct_media_links.add(match)
+
+            # Follow external mirrors to unpack hidden stream urls dynamically
+            for embed_url in embed_player_urls:
+                if embed_url.startswith("//"):
+                    embed_url = "https:" + embed_url
+                try:
+                    player_res = requests.get(embed_url, headers=SESSION_HEADERS, timeout=5)
+                    if player_res.status_code == 200:
+                        inner_html = player_res.text
+                        deep_matches = re.findall(r'(https?:?//[^\s"\']+\.(?:m3u8|mp4|webm)[^\s"\']*)', inner_html)
+                        for file_node in deep_matches:
+                            direct_media_links.add(file_node)
+                except Exception:
+                    continue
     except Exception as e:
-        print(f"Extraction processor execution tracking warning: {e}")
+        print(f"Extraction pipeline failure trace: {e}")
 
     streams = []
     idx = 1
     
-    # Process Direct Video Source Links First
-    for raw_url in collected_links:
+    for raw_url in direct_media_links:
         if any(x in raw_url for x in ["favicon", "logo", "wp-content", "theme", "assets"]):
             continue
             
@@ -218,10 +232,14 @@ def get_stream(video_id: str):
         if normalized_url.startswith("http://"):
             normalized_url = normalized_url.replace("http://", "https://")
 
+        # Strip URL parameters safely via split to provide a direct filename string
+        clean_media_url = normalized_url.split("?")[0]
+
+        # STREMIO ENFORCEMENT: Enforces direct stream files mapping inside 'url' payload index
         streams.append({
             "name": f"⚡ VLC Stream {idx}",
             "title": "Direct Media Stream (HLS/MP4 Track)",
-            "url": normalized_url,
+            "url": clean_media_url,
             "behaviorHints": {
                 "notWebReady": True,
                 "proxyHeaders": {
@@ -233,22 +251,6 @@ def get_stream(video_id: str):
             }
         })
         idx += 1
-
-    # Action 4: Fallback Bridge - If direct files are masked, build the embedded in-app interface module
-    # This prevents 'No streams found' and forces Nuvio to render the player window natively without crashing VLC
-    if not streams:
-        for f_idx, iframe_url in enumerate(iframe_links):
-            clean_iframe = iframe_url.split("?")[0] if "?" in iframe_url else iframe_url
-            if clean_iframe.startswith("//"):
-                clean_iframe = "https:" + clean_iframe
-                
-            streams.append({
-                "name": f"🎬 Player Server {f_idx + 1}",
-                "title": "Launch Direct Video Native Playback",
-                "url": clean_iframe,
-                "behaviorHints": {
-                    "notWebReady": True,
-                    "proxyHeaders": {
-                        "request": {
-                            "User-Agent": SESSION_HEADERS["User-Agent"],
-            
+        
+    return {"streams": streams}
+    
