@@ -1,11 +1,13 @@
 import os
+import re
 import requests
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
+# Enable cross-origin resource sharing so Nuvio clients do not throw HTTP blocked rules
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,35 +17,34 @@ app.add_middleware(
 )
 
 BASE_URL = "https://brokensilenze.net"
-FAVICON = f"{BASE_URL}/favicon.ico"
+FAVICON = "https://brokensilenze.net"
 
 @app.get("/manifest.json")
 def get_manifest():
     return {
-        "id": "community.brokensilenze.fullscraper",
-        "version": "1.3.0",
-        "name": "BS Complete Player",
-        "description": "Exposes full infinite pagination and video streams for Nuvio.",
+        "id": "community.brokensilenze.seamless",
+        "version": "1.5.0",
+        "name": "BS Seamless Streamer",
+        "description": "Natively listings and plays video tracks extracted directly from the web source layout.",
         "types": ["series"],
         "catalogs": [
             {
                 "type": "series",
                 "id": "bs_complete_catalog",
-                "name": "BS Complete Catalogue",
+                "name": "BS Full Stream Feed",
                 "extra": [{"name": "skip", "isRequired": False}]
             }
         ],
         "resources": ["catalog", "meta", "stream"]
     }
 
-# Memory-optimized pagination fetching engine
-def parse_target_page(url: str):
+# Memory-restricted web scraper routine safely scoped for Render free constraints
+def scrape_catalog_nodes(url: str):
     metas = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
-        # Timeout prevents Render worker processes from stalling and running out of RAM memory
         response = requests.get(url, headers=headers, timeout=8)
         if response.status_code != 200:
             return []
@@ -60,9 +61,9 @@ def parse_target_page(url: str):
             if not post_url:
                 continue
                 
-            # Use the actual web-slug to match streams directly later
+            # Create a clean item slug from the web path to keep metadata tracking solid
             clean_slug = post_url.rstrip("/").split("/")[-1]
-            title = title_tag.text.strip() if title_tag else "Unknown Show"
+            title = title_tag.text.strip() if title_tag else f"Show {idx + 1}"
             img_url = img_tag["src"] if img_tag else FAVICON
             
             metas.append({
@@ -70,53 +71,50 @@ def parse_target_page(url: str):
                 "type": "series",
                 "name": title,
                 "poster": img_url,
-                "description": f"Stream directly extracted from source post."
+                "description": f"Source asset catalog row index node target."
             })
     except Exception as e:
-        print(f"Scraper page allocation error: {e}")
-        
+        print(f"Server background worker warning: {e}")
     return metas
 
-# 1. Memory-Safe Infinite Catalogue Pagination 
+# 1. Catalog Endpoint: Translates Nuvio scrolling requests to site paginations
 @app.get("/catalog/series/{catalog_id}.json")
 @app.get("/catalog/series/{catalog_id}")
-def get_catalog(catalog_id: str, skip: int = Query(0, description="Pagination index offset")):
+def get_catalog(catalog_id: str, skip: int = Query(0)):
     clean_catalog = catalog_id.replace(".json", "")
     if clean_catalog != "bs_complete_catalog":
         return {"metas": []}
         
-    # Keeps individual server response weights tiny to fit Render's free tier profile
     items_per_page = 12 
     calculated_page = (skip // items_per_page) + 1
-
+    
     target_url = BASE_URL if calculated_page == 1 else f"{BASE_URL}/page/{calculated_page}/"
-    return {"metas": parse_target_page(target_url)}
+    return {"metas": scrape_catalog_nodes(target_url)}
 
-# 2. Re-mappable Meta Data Handshake Route
+# 2. Meta Endpoint: Formats catalog index records to look clean inside Nuvio
 @app.get("/meta/series/{meta_id}.json")
 @app.get("/meta/series/{meta_id}")
 def get_meta(meta_id: str):
     clean_id = meta_id.replace(".json", "").replace("bs_", "")
-    human_title = clean_id.replace("-", " ").title()
+    human_readable_title = clean_id.replace("-", " ").title()
     
     return {
         "meta": {
             "id": f"bs_{clean_id}",
             "type": "series",
-            "name": human_title,
+            "name": human_readable_title,
             "poster": FAVICON,
             "background": FAVICON,
-            "description": "Video streams available via Nuvio native interface decoder panels."
+            "description": "Click any available player link below to launch direct video playback."
         }
     }
 
-# 3. Stream Endpoint: Resolves the Actual Player Target
+# 3. Stream Engine: Intercepts raw video sources to trigger internal Nuvio video playback
 @app.get("/stream/series/{meta_id}.json")
 @app.get("/stream/series/{meta_id}")
 def get_stream(meta_id: str):
     clean_id = meta_id.replace(".json", "").replace("bs_", "")
-    # Recreate the exact video landing page link
-    target_video_url = f"{BASE_URL}/{clean_id}/"
+    target_video_page = f"{BASE_URL}/{clean_id}/"
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -124,37 +122,48 @@ def get_stream(meta_id: str):
     
     streams = []
     try:
-        response = requests.get(target_video_url, headers=headers, timeout=8)
+        response = requests.get(target_video_page, headers=headers, timeout=8)
         if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-            
-            # Find video sources inside iframes or video players on the show page
-            iframes = soup.find_all("iframe")
-            for idx, iframe in enumerate(iframes):
-                src = iframe.get("src", "")
-                if "http" in src:
+            html_content = response.text
+            soup = BeautifulSoup(html_content, "html.parser")
+
+            # Match hidden streaming media file pointers (.mp4 / .m3u8 structures) inside javascript logic
+            raw_media_links = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', html_content)
+            for idx, file_url in enumerate(set(raw_media_links)):
+                streams.append({
+                    "name": "⚡ AUTO-PLAY",
+                    "title": f"Native Auto-Stream {idx + 1} (Direct File)",
+                    "url": file_url
+                })
+
+            # Check standard raw HTML video elements
+            for index, video in enumerate(soup.find_all("video")):
+                src = video.get("src")
+                if src and "http" in src:
+                    streams.append({"name": "🎬 NATIVE", "title": f"Source Player Track {index + 1}", "url": src})
+                for source in video.find_all("source"):
+                    src_url = source.get("src")
+                    if src_url and "http" in src_url:
+                        streams.append({"name": "🎬 NATIVE", "title": f"Stream Track Quality ({source.get('res', 'Default')})", "url": src_url})
+
+            # Extract iframe references to allow mirrors to operate
+            for idx, iframe in enumerate(soup.find_all("iframe")):
+                iframe_src = iframe.get("src", "")
+                if "http" in iframe_src:
                     streams.append({
-                        "title": f"Mirror Source Server {idx + 1}",
-                        "url": src
-                    })
-                    
-            # Check for generic native file tags inside the markup
-            video_tags = soup.find_all("video")
-            for idx, vid in enumerate(video_tags):
-                src = vid.get("src", "")
-                if src:
-                    streams.append({
-                        "title": f"Direct Stream Node {idx + 1}",
-                        "url": src
+                        "name": "🔗 MIRROR",
+                        "title": f"External Video Server Frame {idx + 1}",
+                        "url": iframe_src
                     })
     except Exception as e:
-        print(f"Streaming link node crawl failure: {e}")
+        print(f"Playback router tracking mismatch: {e}")
 
-    # Fallback to absolute raw viewing link if programmatic frame capture is blocked by anti-bot rules
+    # Fallback element so you can still open the browser frame manually if bot scripts block parsing
     if not streams:
         streams.append({
-            "title": "Launch Direct Video Web View Player",
-            "url": target_video_url
+            "name": "🌐 WEB VIEW",
+            "title": "Launch Direct Video Web View Page",
+            "url": target_video_page
         })
         
     return {"streams": streams}
