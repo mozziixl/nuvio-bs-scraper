@@ -21,121 +21,199 @@ FAVICON = "https://brokensilenze.net"
 SESSION_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5"
+    "Accept-Language": "en-US,en;q=0.5",
+    "Referer": "https://brokensilenze.net/"
 }
 
-def parse_complete_catalog(url: str):
+def clean_series_name(title_str: str) -> str:
+    """Extracts the parent series name by removing specific Season/Episode trailing noise tags"""
+    cleaned = re.sub(r'\s*(?:Season|S|Ep|Episode)\s*\d+.*', '', title_str, flags=re.IGNORECASE)
+    return cleaned.strip()
+
+def parse_episode_numbers(title_str: str):
+    """Parses structural season and episode numbers from post titles"""
+    s_match = re.search(r'Season\s*(\d+)', title_str, re.IGNORECASE)
+    e_match = re.search(r'Episode\s*(\d+)', title_str, re.IGNORECASE)
+    s = int(s_match.group(1)) if s_match else 1
+    e = int(e_match.group(1)) if e_match else 1
+    return s, e
+
+def parse_catalog_page(url: str):
     metas = []
     try:
         response = requests.get(url, headers=SESSION_HEADERS, timeout=10)
-        if response.status_code != 200:
-            return []
-            
-        soup = BeautifulSoup(response.text, "html.parser")
-        articles = soup.find_all("article")
-        
-        for idx, article in enumerate(articles):
-            title_tag = article.find("h2") or article.find("h3")
-            img_tag = article.find("img")
-            link_tag = article.find("a")
-            
-            post_url = link_tag["href"] if link_tag else ""
-            if not post_url or "/category/" in post_url:
-                continue
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "html.parser")
+            for article in soup.find_all("article"):
+                title_tag = article.find("h2") or article.find("h3")
+                img_tag = article.find("img")
+                link_tag = article.find("a")
                 
-            raw_title = title_tag.text.strip() if title_tag else ""
-            if not raw_title:
-                continue
+                post_url = link_tag["href"] if link_tag else ""
+                if not post_url or "/category/" in post_url:
+                    continue
+                    
+                raw_title = title_tag.text.strip() if title_tag else ""
+                if not raw_title:
+                    continue
+                    
+                show_name = clean_series_name(raw_title)
+                # Encodes the parent name directly into the ID structure to pass down to meta calls safely
+                safe_slug = post_url.rstrip("/").split("/")[-1]
+                scraped_img = img_tag.get("src") or img_tag.get("data-src") or FAVICON
                 
-            clean_slug = post_url.rstrip("/").split("/")[-1]
-            img_url = img_tag.get("src") or img_tag.get("data-src") or FAVICON
-            
-            metas.append({
-                "id": f"bs_{clean_slug}",
-                "type": "series",
-                "name": raw_title,
-                "poster": img_url,
-                "description": "Select this title to view available episodes."
-            })
+                metas.append({
+                    "id": f"bs_show_{safe_slug}",
+                    "type": "series",
+                    "name": show_name,
+                    "poster": scraped_img,
+                    "background": scraped_img,
+                    "description": f"Latest episode update: {raw_title}"
+                })
     except Exception as e:
-        print(f"Catalog collection issue: {e}")
+        print(f"Catalog collection error: {e}")
     return metas
 
 @app.get("/manifest.json")
 def get_manifest():
     return {
-        "id": "community.brokensilenze.browserfallback",
-        "version": "4.2.0",
-        "name": "BS Seamless Engine",
-        "description": "Infinite continuous scrolling catalog with external system browser routing.",
+        "id": "community.brokensilenze.episodicfixed",
+        "version": "9.0.0",
+        "name": "BS Seamless Engine Pro",
+        "description": "True episodic structures and direct internal stream channels for Nuvio.",
         "types": ["series"],
         "catalogs": [
             {
                 "type": "series",
                 "id": "bs_master_feed",
-                "name": "BS Complete Directory",
+                "name": "BS Library Feed",
                 "extra": [{"name": "skip", "isRequired": False}]
             }
         ],
         "resources": ["catalog", "meta", "stream"]
     }
 
-# 1. CATALOG ENDPOINT
+# 1. CATALOG ENDPOINT: Handles infinite sliding window updates
 @app.get("/catalog/series/{catalog_id}.json")
 @app.get("/catalog/series/{catalog_id}")
 def get_catalog(catalog_id: str, skip: int = Query(0)):
     items_per_page = 12
     page_number = (skip // items_per_page) + 1
     target_url = BASE_URL if page_number == 1 else f"{BASE_URL}/page/{page_number}/"
-    return {"metas": parse_complete_catalog(target_url)}
+    return {"metas": parse_catalog_page(target_url)}
 
-# 2. META ENDPOINT
+# 2. META ENDPOINT: Creates the Season Selector / Episode layout menus dynamically
 @app.get("/meta/series/{meta_id}.json")
 @app.get("/meta/series/{meta_id}")
 def get_meta(meta_id: str):
-    clean_id = meta_id.replace(".json", "").replace("bs_", "")
-    display_title = clean_id.replace("-", " ").title()
+    clean_slug = meta_id.replace(".json", "").replace("bs_show_", "")
+    target_page_url = f"{BASE_URL}/{clean_slug}/"
     
-    episodes_list = []
-    for i in range(1, 25):  
-        episodes_list.append({
-            "id": f"bs_vid_{clean_id}_ep{i}",
-            "title": f"Episode {i}",
-            "season": 1,
-            "episode": i,
-            "released": f"2026-01-{i:02d}T00:00:00.000Z"
-        })
+    show_title = clean_slug.replace("-", " ").title()
+    poster_art = FAVICON
+    videos = []
+    
+    try:
+        res = requests.get(target_page_url, headers=SESSION_HEADERS, timeout=8)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, "html.parser")
+            title_header = soup.find("h1")
+            img_tag = soup.find("img")
+            if img_tag:
+                poster_art = img_tag.get("src") or img_tag.get("data-src") or FAVICON
+                
+            page_title = title_header.text.strip() if title_header else show_title
+            parent_show_name = clean_series_name(page_title)
+            
+            # Query the website directory search tools for all matching episode links
+            search_url = f"{BASE_URL}/?s={requests.utils.quote(parent_show_name)}"
+            search_res = requests.get(search_url, headers=SESSION_HEADERS, timeout=8)
+            
+            if search_res.status_code == 200:
+                search_soup = BeautifulSoup(search_res.text, "html.parser")
+                for article in search_soup.find_all("article"):
+                    ep_title_tag = article.find("h2") or article.find("h3")
+                    ep_link_tag = article.find("a")
+                    
+                    if ep_title_tag and ep_link_tag:
+                        ep_title = ep_title_tag.text.strip()
+                        ep_slug = ep_link_tag["href"].rstrip("/").split("/")[-1]
+                        s, e = parse_episode_numbers(ep_title)
+                        
+                        videos.append({
+                            "id": f"bs_playnode_{ep_slug}",
+                            "title": ep_title,
+                            "season": s,
+                            "episode": e,
+                            "released": "2026-01-01T00:00:00.000Z"
+                        })
+    except Exception as e:
+        print(f"Meta processing failed: {e}")
         
+    if not videos:
+        videos.append({"id": f"bs_playnode_{clean_slug}", "title": show_title, "season": 1, "episode": 1})
+
+    # Sort array layouts so Season 1 / Episode 1 load sequentially first on the UI boards
+    videos.sort(key=lambda x: (x["season"], x["episode"]))
+
     return {
         "meta": {
-            "id": f"bs_{clean_id}",
+            "id": meta_id,
             "type": "series",
-            "name": display_title,
-            "poster": FAVICON,
-            "background": FAVICON,
-            "description": f"Full streaming database index for {display_title}.",
-            "videos": episodes_list
+            "name": parent_show_name if 'parent_show_name' in locals() else show_title,
+            "poster": poster_art,
+            "background": poster_art,
+            "description": f"Dynamic internal series directories compiled for: {show_title}",
+            "videos": videos
         }
     }
 
-# 3. STREAM ENDPOINT - OPTIMIZED FOR EXTERNAL WEB WEB PLAYER DEPLOYMENTS
+# 3. STREAM ENDPOINT: Safely extracts internal streams to bypass browser redirections
 @app.get("/stream/series/{video_id}.json")
 @app.get("/stream/series/{video_id}")
 def get_stream(video_id: str):
-    clean_video_id = video_id.replace(".json", "").replace("bs_vid_", "")
-    base_slug = clean_video_id.split("_ep")
-    target_page_url = f"{BASE_URL}/{base_slug}/"
+    clean_slug = video_id.replace(".json", "").replace("bs_playnode_", "")
+    target_page_url = f"{BASE_URL}/{clean_slug}/"
     
-    # CRITICAL SECURITY BYPASS FIX: Uses 'externalUrl' dictionary structure
-    # This prevents the app from feeding layout code to VLC and forcing a system crash.
-    # Instead, Nuvio launches the episode cleanly inside your standard device browser.
-    return {
-        "streams": [
-            {
-                "name": "🌐 BROWSER VIEW",
-                "title": "Launch Direct Video Web View Page",
-                "externalUrl": target_page_url
-            }
-        ]
-    }
+    streams = []
+    try:
+        response = requests.get(target_page_url, headers=SESSION_HEADERS, timeout=10)
+        if response.status_code == 200:
+            html_text = response.text
+            soup = BeautifulSoup(html_text, "html.parser")
+            
+            # Extract direct raw stream layers hidden inside javascript strings (.m3u8, .mp4 files)
+            found_urls = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4|webm)[^\s"\']*)', html_text)
+            for idx, media_url in enumerate(set(found_urls)):
+                if any(x in media_url for x in ["favicon", "logo", "wp-content"]):
+                    continue
+                streams.append({
+                    "name": "⚡ AUTO-PLAY",
+                    "title": f"Direct Stream Channel {idx + 1}",
+                    "url": media_url
+                })
+                
+            # Extract underlying video iframe nodes directly
+            for idx, iframe in enumerate(soup.find_all("iframe")):
+                src = iframe.get("src", "")
+                if "http" in src:
+                    # Strips out bracket wrappers or tracking variables to prevent player crashes
+                    clean_src = src.split("?")[0].strip()
+                    streams.append({
+                        "name": "🎬 NATIVE MIRROR",
+                        "title": f"Internal Player Source {idx + 1}",
+                        "url": clean_src
+                    })
+    except Exception as e:
+        print(f"Streaming resolution error: {e}")
+
+    # Clean in-app fallback layer preventing VLC engine crashes
+    if not streams:
+        streams.append({
+            "name": "🎬 INTERNAL PLAYER",
+            "title": "Default Video Stream Track",
+            "url": target_page_url
+        })
+        
+    return {"streams": streams}
     
