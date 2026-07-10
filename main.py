@@ -55,7 +55,7 @@ def parse_complete_catalog(url: str):
                 "type": "series",
                 "name": raw_title,
                 "poster": img_url,
-                "description": "Select this title to load the episode catalog rows natively."
+                "description": "Select this title to view available episodes."
             })
     except Exception as e:
         print(f"Catalog collection issue: {e}")
@@ -64,10 +64,10 @@ def parse_complete_catalog(url: str):
 @app.get("/manifest.json")
 def get_manifest():
     return {
-        "id": "community.brokensilenze.ultimate",
-        "version": "4.1.0",
+        "id": "community.brokensilenze.browserfallback",
+        "version": "4.2.0",
         "name": "BS Seamless Engine",
-        "description": "Infinite continuous scrolling catalog with external VLC player routing compatibility.",
+        "description": "Infinite continuous scrolling catalog with external system browser routing.",
         "types": ["series"],
         "catalogs": [
             {
@@ -118,51 +118,24 @@ def get_meta(meta_id: str):
         }
     }
 
-# 3. STREAM ENDPOINT - OPTIMIZED FOR VLC ENGINE
+# 3. STREAM ENDPOINT - OPTIMIZED FOR EXTERNAL WEB WEB PLAYER DEPLOYMENTS
 @app.get("/stream/series/{video_id}.json")
 @app.get("/stream/series/{video_id}")
 def get_stream(video_id: str):
     clean_video_id = video_id.replace(".json", "").replace("bs_vid_", "")
-    base_slug = clean_video_id.split("_ep")[0]
+    base_slug = clean_video_id.split("_ep")
     target_page_url = f"{BASE_URL}/{base_slug}/"
     
-    streams = []
-    try:
-        response = requests.get(target_page_url, headers=SESSION_HEADERS, timeout=10)
-        if response.status_code == 200:
-            html_text = response.text
-            soup = BeautifulSoup(html_text, "html.parser")
-            
-            found_urls = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4|webm)[^\s"\']*)', html_text)
-            for idx, media_url in enumerate(set(found_urls)):
-                if any(x in media_url for x in ["favicon", "logo", "wp-content"]):
-                    continue
-                streams.append({
-                    "name": "⚡ AUTO-PLAY",
-                    "title": f"VLC Stream Track {idx + 1}",
-                    "url": media_url
-                })
-                
-            for idx, iframe in enumerate(soup.find_all("iframe")):
-                src = iframe.get("src", "")
-                if "http" in src:
-                    # Formats the mirror source using the 'url' property key rule
-                    # Nuvio intercepts this and pushes it straight to external media decoders
-                    streams.append({
-                        "name": "🎬 VLC PLAYER",
-                        "title": f"External Link Server Mirror {idx + 1}",
-                        "url": src
-                    })
-    except Exception as e:
-        print(f"Deep stream resolver mismatch error: {e}")
-
-    # FIXED FALLBACK VALUE: Uses direct url tracking to launch VLC instead of opening a web browser
-    if not streams:
-        streams.append({
-            "name": "🎬 VLC LINK",
-            "title": "Force Stream Handoff to VLC",
-            "url": target_page_url
-        })
-        
-    return {"streams": streams}
+    # CRITICAL SECURITY BYPASS FIX: Uses 'externalUrl' dictionary structure
+    # This prevents the app from feeding layout code to VLC and forcing a system crash.
+    # Instead, Nuvio launches the episode cleanly inside your standard device browser.
+    return {
+        "streams": [
+            {
+                "name": "🌐 BROWSER VIEW",
+                "title": "Launch Direct Video Web View Page",
+                "externalUrl": target_page_url
+            }
+        ]
+    }
     
