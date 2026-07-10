@@ -74,10 +74,10 @@ def parse_catalog_page(url: str):
 @app.get("/manifest.json")
 def get_manifest():
     return {
-        "id": "community.brokensilenze.episodicfixed",
-        "version": "9.1.0",
+        "id": "community.brokensilenze.vlcoptimized",
+        "version": "10.0.0",
         "name": "BS Seamless Engine Pro",
-        "description": "True episodic structures and direct internal stream channels for Nuvio.",
+        "description": "True episodic structures and direct external VLC player stream channels.",
         "types": ["series"],
         "catalogs": [
             {
@@ -163,7 +163,7 @@ def get_meta(meta_id: str):
         }
     }
 
-# 3. STREAM ENDPOINT - HYBRID EXTRACTOR FOR SECURE VIDEO PLAYBACK
+# 3. STREAM ENDPOINT - OPTIMIZED WITH STREMIO/NUVIO COMPATIBILITY FIXES FOR VLC
 @app.get("/stream/series/{video_id}.json")
 @app.get("/stream/series/{video_id}")
 def get_stream(video_id: str):
@@ -175,51 +175,40 @@ def get_stream(video_id: str):
         response = requests.get(target_page_url, headers=SESSION_HEADERS, timeout=10)
         if response.status_code == 200:
             html_text = response.text
-            soup = BeautifulSoup(html_text, "html.parser")
             
-            # Scrape absolute stream formats (.mp4 / .m3u8 URLs) hidden inside backend data layers
+            # Scrape ONLY direct raw video formats (.m3u8, .mp4, .webm) via regex scanning
             found_urls = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4|webm)[^\s"\']*)', html_text)
-            for idx, media_url in enumerate(set(found_urls)):
-                if any(x in media_url for x in ["favicon", "logo", "wp-content"]):
+            
+            # Filter matches to ensure they are true media stream targets
+            valid_media_links = []
+            for media_url in set(found_urls):
+                if any(x in media_url for x in ["favicon", "logo", "wp-content", "theme", "assets"]):
                     continue
-                streams.append({
-                    "name": "⚡ AUTO-PLAY",
-                    "title": f"Direct Stream Channel {idx + 1}",
-                    "url": media_url
-                })
+                valid_media_links.append(media_url)
+            
+            # Inject compliant objects matching the required compatibility rules
+            for idx, stream_url in enumerate(valid_media_links):
+                # Prefer HTTPS media links
+                secure_url = stream_url.replace("http://", "https://") if stream_url.startswith("http://") else stream_url
                 
-            # Scrape dynamic player iframes
-            for idx, iframe in enumerate(soup.find_all("iframe")):
-                src = iframe.get("src", "")
-                if "http" in src:
-                    clean_src = src.split("?")[0].strip()
-                    
-                    # ENCAPSULATION FIX: Strips problematic JavaScript tracking loops.
-                    # This prevents the stream core from dropping the player session, stopping the flash-and-close crash behavior.
-                    streams.append({
-                        "name": "🎬 NATIVE MIRROR",
-                        "title": f"Internal Player Source {idx + 1}",
-                        "url": clean_src,
-                        "behaviorHints": {
-                            "notSupported": False,
-                            "proxyHeaders": {
-                                "request": {
-                                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                    "Referer": "https://brokensilenze.net"
-                                }
+                streams.append({
+                    "name": "⚡ VLC PLAY",
+                    "title": f"Direct Stream Track {idx + 1} (Native)",
+                    "url": secure_url,
+                    "behaviorHints": {
+                        "notWebReady": True,
+                        "proxyHeaders": {
+                            "request": {
+                                "User-Agent": SESSION_HEADERS["User-Agent"],
+                                "Referer": BASE_URL + "/"
                             }
                         }
-                    })
+                    }
+                })
     except Exception as e:
-        print(f"Streaming resolution error: {e}")
+        print(f"Direct stream compliance extraction failed: {e}")
 
-    # Fallback Option: Forces Nuvio to manage media tracks smoothly inside its internal view panel
-    if not streams:
-        streams.append({
-            "name": "🎬 INTERNAL PLAYER",
-            "title": "Default Video Stream Track",
-            "url": target_page_url
-        })
-        
+    # COMPLIANCE FIX: If no direct media urls exist, return an empty array.
+    # No iframes or webpage fallback links are appended to protect VLC cores from data crashes.
     return {"streams": streams}
     
