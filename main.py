@@ -22,7 +22,7 @@ SESSION_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
-    "Referer": "https://brokensilenze.net"
+    "Referer": "https://brokensilenze.net/"
 }
 
 def clean_series_name(title_str: str) -> str:
@@ -74,10 +74,10 @@ def parse_catalog_page(url: str):
 @app.get("/manifest.json")
 def get_manifest():
     return {
-        "id": "community.brokensilenze.vlcoptimized",
-        "version": "10.0.0",
+        "id": "community.brokensilenze.normalized",
+        "version": "11.0.0",
         "name": "BS Seamless Engine Pro",
-        "description": "True episodic structures and direct external VLC player stream channels.",
+        "description": "True episodic structures with complete tag normalization and VLC tracking links.",
         "types": ["series"],
         "catalogs": [
             {
@@ -163,52 +163,73 @@ def get_meta(meta_id: str):
         }
     }
 
-# 3. STREAM ENDPOINT - OPTIMIZED WITH STREMIO/NUVIO COMPATIBILITY FIXES FOR VLC
+# 3. STREAM ENDPOINT - MULTI-TAG PARSER AND PROTOCOL NORMALIZER
 @app.get("/stream/series/{video_id}.json")
 @app.get("/stream/series/{video_id}")
 def get_stream(video_id: str):
     clean_slug = video_id.replace(".json", "").replace("bs_playnode_", "")
     target_page_url = f"{BASE_URL}/{clean_slug}/"
     
-    streams = []
+    collected_links = set()
     try:
         response = requests.get(target_page_url, headers=SESSION_HEADERS, timeout=10)
         if response.status_code == 200:
             html_text = response.text
+            soup = BeautifulSoup(html_text, "html.parser")
             
-            # Scrape ONLY direct raw video formats (.m3u8, .mp4, .webm) via regex scanning
-            found_urls = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4|webm)[^\s"\']*)', html_text)
+            # Action 1: Extract standard video tag sources directly
+            for video in soup.find_all("video"):
+                v_src = video.get("src")
+                if v_src:
+                    collected_links.add(v_src)
+                    
+            # Action 2: Pull elements from inner source tags
+            for source in soup.find_all("source"):
+                s_src = source.get("src")
+                if s_src:
+                    collected_links.add(s_src)
             
-            # Filter matches to ensure they are true media stream targets
-            valid_media_links = []
-            for media_url in set(found_urls):
-                if any(x in media_url for x in ["favicon", "logo", "wp-content", "theme", "assets"]):
-                    continue
-                valid_media_links.append(media_url)
-            
-            # Inject compliant objects matching the required compatibility rules
-            for idx, stream_url in enumerate(valid_media_links):
-                # Prefer HTTPS media links
-                secure_url = stream_url.replace("http://", "https://") if stream_url.startswith("http://") else stream_url
-                
-                streams.append({
-                    "name": "⚡ VLC PLAY",
-                    "title": f"Direct Stream Track {idx + 1} (Native)",
-                    "url": secure_url,
-                    "behaviorHints": {
-                        "notWebReady": True,
-                        "proxyHeaders": {
-                            "request": {
-                                "User-Agent": SESSION_HEADERS["User-Agent"],
-                                "Referer": BASE_URL + "/"
-                            }
-                        }
-                    }
-                })
+            # Action 3: Deep script text regex sweep fallback
+            regex_matches = re.findall(r'(https?:?//[^\s"\']+\.(?:m3u8|mp4|webm)[^\s"\']*)', html_text)
+            for match in regex_matches:
+                collected_links.add(match)
     except Exception as e:
-        print(f"Direct stream compliance extraction failed: {e}")
+        print(f"Extraction processor execution tracking warning: {e}")
 
-    # COMPLIANCE FIX: If no direct media urls exist, return an empty array.
-    # No iframes or webpage fallback links are appended to protect VLC cores from data crashes.
+    streams = []
+    idx = 1
+    for raw_url in collected_links:
+        # Ignore common layout design images or placeholders
+        if any(x in raw_url for x in ["favicon", "logo", "wp-content", "theme", "assets"]):
+            continue
+            
+        # Action 4: Protocol Normalization Rule (fixes broken // links)
+        normalized_url = raw_url
+        if normalized_url.startswith("//"):
+            normalized_url = "https:" + normalized_url
+        elif not normalized_url.startswith("http"):
+            # Skip any localized layout variables
+            continue
+            
+        # Enforce secure HTTPS transfer schemas
+        if normalized_url.startswith("http://"):
+            normalized_url = normalized_url.replace("http://", "https://")
+
+        streams.append({
+            "name": "⚡ VLC PLAY",
+            "title": f"Direct Media Channel {idx}",
+            "url": normalized_url,
+            "behaviorHints": {
+                "notWebReady": True,
+                "proxyHeaders": {
+                    "request": {
+                        "User-Agent": SESSION_HEADERS["User-Agent"],
+                        "Referer": BASE_URL + "/"
+                    }
+                }
+            }
+        })
+        idx += 1
+        
     return {"streams": streams}
     
