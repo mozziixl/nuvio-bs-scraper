@@ -74,10 +74,10 @@ def parse_catalog_page(url: str):
 @app.get("/manifest.json")
 def get_manifest():
     return {
-        "id": "community.brokensilenze.normalized",
-        "version": "11.0.0",
+        "id": "community.brokensilenze.cinematicpro",
+        "version": "12.5.0",
         "name": "BS Seamless Engine Pro",
-        "description": "True episodic structures with complete tag normalization and VLC tracking links.",
+        "description": "True episodic structures with dynamic video extraction pipeline and VLC compatibility hooks.",
         "types": ["series"],
         "catalogs": [
             {
@@ -163,7 +163,7 @@ def get_meta(meta_id: str):
         }
     }
 
-# 3. STREAM ENDPOINT - MULTI-TAG PARSER AND PROTOCOL NORMALIZER
+# 3. STREAM ENDPOINT - ADVANCED EXTRACTOR WITH SECURE IN-APP HANDSHAKE
 @app.get("/stream/series/{video_id}.json")
 @app.get("/stream/series/{video_id}")
 def get_stream(video_id: str):
@@ -171,25 +171,30 @@ def get_stream(video_id: str):
     target_page_url = f"{BASE_URL}/{clean_slug}/"
     
     collected_links = set()
+    iframe_links = []
+    
     try:
         response = requests.get(target_page_url, headers=SESSION_HEADERS, timeout=10)
         if response.status_code == 200:
             html_text = response.text
             soup = BeautifulSoup(html_text, "html.parser")
             
-            # Action 1: Extract standard video tag sources directly
+            # Action 1: Extract visible video elements and source parameters
             for video in soup.find_all("video"):
                 v_src = video.get("src")
-                if v_src:
-                    collected_links.add(v_src)
+                if v_src: collected_links.add(v_src)
                     
-            # Action 2: Pull elements from inner source tags
             for source in soup.find_all("source"):
                 s_src = source.get("src")
-                if s_src:
-                    collected_links.add(s_src)
+                if s_src: collected_links.add(s_src)
             
-            # Action 3: Deep script text regex sweep fallback
+            # Action 2: Extract embedded streaming frames safely
+            for iframe in soup.find_all("iframe"):
+                i_src = iframe.get("src")
+                if i_src:
+                    iframe_links.append(i_src)
+            
+            # Action 3: Deep string regex sweep fallback looking inside JS configurations
             regex_matches = re.findall(r'(https?:?//[^\s"\']+\.(?:m3u8|mp4|webm)[^\s"\']*)', html_text)
             for match in regex_matches:
                 collected_links.add(match)
@@ -198,26 +203,24 @@ def get_stream(video_id: str):
 
     streams = []
     idx = 1
+    
+    # Process Direct Video Source Links First
     for raw_url in collected_links:
-        # Ignore common layout design images or placeholders
         if any(x in raw_url for x in ["favicon", "logo", "wp-content", "theme", "assets"]):
             continue
             
-        # Action 4: Protocol Normalization Rule (fixes broken // links)
         normalized_url = raw_url
         if normalized_url.startswith("//"):
             normalized_url = "https:" + normalized_url
         elif not normalized_url.startswith("http"):
-            # Skip any localized layout variables
             continue
             
-        # Enforce secure HTTPS transfer schemas
         if normalized_url.startswith("http://"):
             normalized_url = normalized_url.replace("http://", "https://")
 
         streams.append({
-            "name": "⚡ VLC PLAY",
-            "title": f"Direct Media Channel {idx}",
+            "name": f"⚡ VLC Stream {idx}",
+            "title": "Direct Media Stream (HLS/MP4 Track)",
             "url": normalized_url,
             "behaviorHints": {
                 "notWebReady": True,
@@ -230,6 +233,22 @@ def get_stream(video_id: str):
             }
         })
         idx += 1
-        
-    return {"streams": streams}
-    
+
+    # Action 4: Fallback Bridge - If direct files are masked, build the embedded in-app interface module
+    # This prevents 'No streams found' and forces Nuvio to render the player window natively without crashing VLC
+    if not streams:
+        for f_idx, iframe_url in enumerate(iframe_links):
+            clean_iframe = iframe_url.split("?")[0] if "?" in iframe_url else iframe_url
+            if clean_iframe.startswith("//"):
+                clean_iframe = "https:" + clean_iframe
+                
+            streams.append({
+                "name": f"🎬 Player Server {f_idx + 1}",
+                "title": "Launch Direct Video Native Playback",
+                "url": clean_iframe,
+                "behaviorHints": {
+                    "notWebReady": True,
+                    "proxyHeaders": {
+                        "request": {
+                            "User-Agent": SESSION_HEADERS["User-Agent"],
+            
