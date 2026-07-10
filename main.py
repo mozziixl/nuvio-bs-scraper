@@ -6,7 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# Enable Cross-Origin Resource Sharing so Nuvio can read the data stream securely
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,7 +14,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1. The Add-on Manifest Definition Endpoint
 @app.get("/manifest.json")
 def get_manifest():
     return {
@@ -34,19 +32,17 @@ def get_manifest():
         "resources": ["catalog", "stream"]
     }
 
-# 2. The Dynamic Web-Scraping Catalog Engine
+# Unified Endpoint: This function now answers BOTH path configurations flawlessly
 @app.get("/catalog/series/brokensilenze_latest.json")
+@app.get("/catalog/series/brokensilenze_latest")
 def get_catalog():
     metas = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
-        # Crawl the layout tree of the target streaming site
         response = requests.get("https://brokensilenze.net", headers=headers, timeout=12)
         soup = BeautifulSoup(response.text, "html.parser")
-        
-        # Isolate the article posts (adjust selector tags to match site HTML containers)
         articles = soup.find_all("article", limit=15)
         
         for idx, article in enumerate(articles):
@@ -58,7 +54,6 @@ def get_catalog():
             img_url = img_tag["src"] if img_tag else "https://brokensilenze.netfavicon.ico"
             post_url = link_tag["href"] if link_tag else ""
             
-            # Reformat crawled HTML attributes into compliant Stremio/Nuvio catalog items
             metas.append({
                 "id": f"bs_show_{idx}",
                 "type": "series",
@@ -71,9 +66,8 @@ def get_catalog():
         
     return {"metas": metas}
 
-# Run the app locally or via web-servers using uvicorn
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
-  
+    
