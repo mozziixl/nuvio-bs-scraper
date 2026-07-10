@@ -22,16 +22,14 @@ SESSION_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
-    "Referer": "https://brokensilenze.net/"
+    "Referer": "https://brokensilenze.net"
 }
 
 def clean_series_name(title_str: str) -> str:
-    """Extracts the parent series name by removing specific Season/Episode trailing noise tags"""
     cleaned = re.sub(r'\s*(?:Season|S|Ep|Episode)\s*\d+.*', '', title_str, flags=re.IGNORECASE)
     return cleaned.strip()
 
 def parse_episode_numbers(title_str: str):
-    """Parses structural season and episode numbers from post titles"""
     s_match = re.search(r'Season\s*(\d+)', title_str, re.IGNORECASE)
     e_match = re.search(r'Episode\s*(\d+)', title_str, re.IGNORECASE)
     s = int(s_match.group(1)) if s_match else 1
@@ -58,7 +56,6 @@ def parse_catalog_page(url: str):
                     continue
                     
                 show_name = clean_series_name(raw_title)
-                # Encodes the parent name directly into the ID structure to pass down to meta calls safely
                 safe_slug = post_url.rstrip("/").split("/")[-1]
                 scraped_img = img_tag.get("src") or img_tag.get("data-src") or FAVICON
                 
@@ -78,7 +75,7 @@ def parse_catalog_page(url: str):
 def get_manifest():
     return {
         "id": "community.brokensilenze.episodicfixed",
-        "version": "9.0.0",
+        "version": "9.1.0",
         "name": "BS Seamless Engine Pro",
         "description": "True episodic structures and direct internal stream channels for Nuvio.",
         "types": ["series"],
@@ -93,7 +90,7 @@ def get_manifest():
         "resources": ["catalog", "meta", "stream"]
     }
 
-# 1. CATALOG ENDPOINT: Handles infinite sliding window updates
+# 1. CATALOG ENDPOINT
 @app.get("/catalog/series/{catalog_id}.json")
 @app.get("/catalog/series/{catalog_id}")
 def get_catalog(catalog_id: str, skip: int = Query(0)):
@@ -102,7 +99,7 @@ def get_catalog(catalog_id: str, skip: int = Query(0)):
     target_url = BASE_URL if page_number == 1 else f"{BASE_URL}/page/{page_number}/"
     return {"metas": parse_catalog_page(target_url)}
 
-# 2. META ENDPOINT: Creates the Season Selector / Episode layout menus dynamically
+# 2. META ENDPOINT
 @app.get("/meta/series/{meta_id}.json")
 @app.get("/meta/series/{meta_id}")
 def get_meta(meta_id: str):
@@ -125,7 +122,6 @@ def get_meta(meta_id: str):
             page_title = title_header.text.strip() if title_header else show_title
             parent_show_name = clean_series_name(page_title)
             
-            # Query the website directory search tools for all matching episode links
             search_url = f"{BASE_URL}/?s={requests.utils.quote(parent_show_name)}"
             search_res = requests.get(search_url, headers=SESSION_HEADERS, timeout=8)
             
@@ -153,7 +149,6 @@ def get_meta(meta_id: str):
     if not videos:
         videos.append({"id": f"bs_playnode_{clean_slug}", "title": show_title, "season": 1, "episode": 1})
 
-    # Sort array layouts so Season 1 / Episode 1 load sequentially first on the UI boards
     videos.sort(key=lambda x: (x["season"], x["episode"]))
 
     return {
@@ -168,7 +163,7 @@ def get_meta(meta_id: str):
         }
     }
 
-# 3. STREAM ENDPOINT: Safely extracts internal streams to bypass browser redirections
+# 3. STREAM ENDPOINT - HYBRID EXTRACTOR FOR SECURE VIDEO PLAYBACK
 @app.get("/stream/series/{video_id}.json")
 @app.get("/stream/series/{video_id}")
 def get_stream(video_id: str):
@@ -182,7 +177,7 @@ def get_stream(video_id: str):
             html_text = response.text
             soup = BeautifulSoup(html_text, "html.parser")
             
-            # Extract direct raw stream layers hidden inside javascript strings (.m3u8, .mp4 files)
+            # Scrape absolute stream formats (.mp4 / .m3u8 URLs) hidden inside backend data layers
             found_urls = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4|webm)[^\s"\']*)', html_text)
             for idx, media_url in enumerate(set(found_urls)):
                 if any(x in media_url for x in ["favicon", "logo", "wp-content"]):
@@ -193,21 +188,32 @@ def get_stream(video_id: str):
                     "url": media_url
                 })
                 
-            # Extract underlying video iframe nodes directly
+            # Scrape dynamic player iframes
             for idx, iframe in enumerate(soup.find_all("iframe")):
                 src = iframe.get("src", "")
                 if "http" in src:
-                    # Strips out bracket wrappers or tracking variables to prevent player crashes
                     clean_src = src.split("?")[0].strip()
+                    
+                    # ENCAPSULATION FIX: Strips problematic JavaScript tracking loops.
+                    # This prevents the stream core from dropping the player session, stopping the flash-and-close crash behavior.
                     streams.append({
                         "name": "🎬 NATIVE MIRROR",
                         "title": f"Internal Player Source {idx + 1}",
-                        "url": clean_src
+                        "url": clean_src,
+                        "behaviorHints": {
+                            "notSupported": False,
+                            "proxyHeaders": {
+                                "request": {
+                                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                    "Referer": "https://brokensilenze.net"
+                                }
+                            }
+                        }
                     })
     except Exception as e:
         print(f"Streaming resolution error: {e}")
 
-    # Clean in-app fallback layer preventing VLC engine crashes
+    # Fallback Option: Forces Nuvio to manage media tracks smoothly inside its internal view panel
     if not streams:
         streams.append({
             "name": "🎬 INTERNAL PLAYER",
