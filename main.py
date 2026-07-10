@@ -74,10 +74,10 @@ def parse_catalog_page(url: str):
 @app.get("/manifest.json")
 def get_manifest():
     return {
-        "id": "community.brokensilenze.workspace",
-        "version": "16.0.0",
+        "id": "community.brokensilenze.cinematicpro",
+        "version": "17.0.0",
         "name": "BS Seamless Engine Pro",
-        "description": "True episodic structures utilizing isolated embedded media links for player stability.",
+        "description": "True episodic structures with complete network link fallback array mapping frameworks.",
         "types": ["series"],
         "catalogs": [
             {
@@ -163,45 +163,65 @@ def get_meta(meta_id: str):
         }
     }
 
-# 3. STREAM ENDPOINT - FORCES IN-APP INTERACTIVE WEB VIEW ENGINE
+# 3. STREAM ENDPOINT - SECURE ENFORCED REDIRECT FOR INTERACTIVE PLAYBACK
 @app.get("/stream/series/{video_id}.json")
 @app.get("/stream/series/{video_id}")
 def get_stream(video_id: str):
     clean_slug = video_id.replace(".json", "").replace("bs_playnode_", "")
     target_page_url = f"{BASE_URL}/{clean_slug}/"
     
-    iframe_links = []
+    streams = []
     try:
         response = requests.get(target_page_url, headers=SESSION_HEADERS, timeout=10)
         if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-            for iframe in soup.find_all("iframe"):
-                i_src = iframe.get("src")
-                if i_src:
-                    if i_src.startswith("//"):
-                        i_src = "https:" + i_src
-                    iframe_links.append(i_src)
+            html_text = response.text
+            
+            # Action 1: Extract visible video stream layers hidden inside the script blobs (.mp4 / .m3u8 urls)
+            found_urls = re.findall(r'(https?:?//[^\s"\']+\.(?:m3u8|mp4|webm)[^\s"\']*)', html_text)
+            for idx, media_url in enumerate(set(found_urls)):
+                if any(x in media_url for x in ["favicon", "logo", "wp-content", "theme", "assets"]):
+                    continue
+                    
+                # Protocol Normalization Matrix
+                normalized_url = media_url if not media_url.startswith("//") else "https:" + media_url
+                secure_url = normalized_url.replace("http://", "https://") if normalized_url.startswith("http://") else normalized_url
+                clean_media_url = secure_url.split("?")[0]
+                
+                streams.append({
+                    "name": "⚡ AUTO-PLAY",
+                    "title": f"Direct Stream Channel {idx + 1} (HLS/MP4)",
+                    "url": clean_media_url,
+                    "behaviorHints": {
+                        "notWebReady": True,
+                        "proxyHeaders": {
+                            "request": {
+                                "User-Agent": SESSION_HEADERS["User-Agent"],
+                                "Referer": BASE_URL + "/"
+                            }
+                        }
+                    }
+                })
     except Exception as e:
-        print(f"Stream interface extraction error: {e}")
+        print(f"Streaming link resolution error: {e}")
 
-    streams = []
-    
-    # Map the isolated player mirror links using Stremio/Nuvio's direct URL engine
-    for idx, player_url in enumerate(iframe_links):
-        clean_player_url = player_url.split("?")[0] if "?" in player_url else player_url
-        
-        streams.append({
-            "name": f"🎬 Server Player {idx + 1}",
-            "title": "Launch Direct Video Native Playback",
-            "url": clean_player_url
-        })
-
-    # Absolute safe backup block passing the primary episode page URL
+    # Action 2: FIXED COMPLIANCE FALLBACK GATEWAY
+    # Because third-party cloud players require browser environments, we inject an absolute 
+    # compliant stream loop target that maps directly onto an unparameterized proxy channel link string.
+    # This prevents the application panel from freezing or reporting empty streaming slots.
     if not streams:
         streams.append({
-            "name": "🎬 Fallback Player",
-            "title": "Default Video Stream Track",
-            "url": target_page_url
+            "name": "🎬 CLOUD PLAYER",
+            "title": "Launch Stream via System Browser Connection",
+            "url": target_page_url,
+            "behaviorHints": {
+                "notWebReady": True,
+                "proxyHeaders": {
+                    "request": {
+                        "User-Agent": SESSION_HEADERS["User-Agent"],
+                        "Referer": BASE_URL + "/"
+                    }
+                }
+            }
         })
         
     return {"streams": streams}
