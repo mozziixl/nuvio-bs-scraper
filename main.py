@@ -7,7 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# Enable cross-origin resource sharing so Nuvio clients do not throw HTTP blocked rules
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,33 +18,35 @@ app.add_middleware(
 BASE_URL = "https://brokensilenze.net"
 FAVICON = "https://brokensilenze.net"
 
-@app.get("/manifest.json")
-def get_manifest():
-    return {
-        "id": "community.brokensilenze.seamless",
-        "version": "1.5.0",
-        "name": "BS Seamless Streamer",
-        "description": "Natively listings and plays video tracks extracted directly from the web source layout.",
-        "types": ["series"],
-        "catalogs": [
-            {
-                "type": "series",
-                "id": "bs_complete_catalog",
-                "name": "BS Full Stream Feed",
-                "extra": [{"name": "skip", "isRequired": False}]
-            }
-        ],
-        "resources": ["catalog", "meta", "stream"]
-    }
+# Real browser signatures to prevent Cloudflare blocks
+SESSION_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5"
+}
 
-# Memory-restricted web scraper routine safely scoped for Render free constraints
-def scrape_catalog_nodes(url: str):
-    metas = []
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+# Dynamic Cinemeta/TMDB Lookup Engine
+def find_imdb_id(title: str) -> str:
+    """Searches open streaming catalogs to find the official IMDb ID for a title"""
     try:
-        response = requests.get(url, headers=headers, timeout=8)
+        # Clean title variations (e.g. removing 'Season 1' or dates) for accurate search matching
+        search_query = re.sub(r'\s*(?:Season|S)\s*\d+|\s*\(\d{4}\)', '', title, flags=re.IGNORECASE).strip()
+        url = f"https://strem.io{requests.utils.quote(search_query)}.json"
+        
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            metas = data.get("metas", [])
+            if metas:
+                return metas[0].get("id")  # Returns something like "tt14622242"
+    except Exception as e:
+        print(f"IMDb metadata matching lookup error: {e}")
+    return None
+
+def parse_complete_catalog(url: str):
+    metas = []
+    try:
+        response = requests.get(url, headers=SESSION_HEADERS, timeout=10)
         if response.status_code != 200:
             return []
             
@@ -53,117 +54,128 @@ def scrape_catalog_nodes(url: str):
         articles = soup.find_all("article")
         
         for idx, article in enumerate(articles):
-            title_tag = article.find("h2")
+            title_tag = article.find("h2") or article.find("h3")
             img_tag = article.find("img")
             link_tag = article.find("a")
             
             post_url = link_tag["href"] if link_tag else ""
-            if not post_url:
+            if not post_url or "/category/" in post_url:
                 continue
                 
-            # Create a clean item slug from the web path to keep metadata tracking solid
+            raw_title = title_tag.text.strip() if title_tag else ""
+            if not raw_title:
+                continue
+                
             clean_slug = post_url.rstrip("/").split("/")[-1]
-            title = title_tag.text.strip() if title_tag else f"Show {idx + 1}"
-            img_url = img_tag["src"] if img_tag else FAVICON
+            img_url = img_tag.get("src") or img_tag.get("data-src") or FAVICON
+            
+            # Lookup real database ID
+            imdb_id = find_imdb_id(raw_title)
+            
+            # CRITICAL FIX: If found, use the IMDb ID. Nuvio fills out the layout itself.
+            # If not found, use a clean slug so it displays a proper name instead of 'Show_14'
+            final_id = imdb_id if imdb_id else f"bs_{clean_slug}"
             
             metas.append({
-                "id": f"bs_{clean_slug}",
+                "id": final_id,
                 "type": "series",
-                "name": title,
+                "name": raw_title,
                 "poster": img_url,
-                "description": f"Source asset catalog row index node target."
+                "description": f"Stream links matched from web backend source files."
             })
     except Exception as e:
-        print(f"Server background worker warning: {e}")
+        print(f"Catalog processing grid warning: {e}")
     return metas
 
-# 1. Catalog Endpoint: Translates Nuvio scrolling requests to site paginations
+@app.get("/manifest.json")
+def get_manifest():
+    return {
+        "id": "community.brokensilenze.imdbmatched",
+        "version": "3.0.0",
+        "name": "BS Pro Media Addon",
+        "description": "Natively binds website content to official cinematic databases for complete metadata layouts.",
+        "types": ["series"],
+        "catalogs": [
+            {
+                "type": "series",
+                "id": "bs_pro_feed",
+                "name": "BS Main Library",
+                "extra": [{"name": "skip", "isRequired": False}]
+            }
+        ],
+        "resources": ["catalog", "stream"]  # Removed "meta" so Nuvio falls back to global databases
+    }
+
+# 1. Catalog Endpoint: Pulls items and matches database codes
 @app.get("/catalog/series/{catalog_id}.json")
 @app.get("/catalog/series/{catalog_id}")
 def get_catalog(catalog_id: str, skip: int = Query(0)):
-    clean_catalog = catalog_id.replace(".json", "")
-    if clean_catalog != "bs_complete_catalog":
-        return {"metas": []}
-        
-    items_per_page = 12 
-    calculated_page = (skip // items_per_page) + 1
+    items_per_page = 12
+    page_number = (skip // items_per_page) + 1
     
-    target_url = BASE_URL if calculated_page == 1 else f"{BASE_URL}/page/{calculated_page}/"
-    return {"metas": scrape_catalog_nodes(target_url)}
+    target_url = BASE_URL if page_number == 1 else f"{BASE_URL}/page/{page_number}/"
+    return {"metas": parse_complete_catalog(target_url)}
 
-# 2. Meta Endpoint: Formats catalog index records to look clean inside Nuvio
-@app.get("/meta/series/{meta_id}.json")
-@app.get("/meta/series/{meta_id}")
-def get_meta(meta_id: str):
-    clean_id = meta_id.replace(".json", "").replace("bs_", "")
-    human_readable_title = clean_id.replace("-", " ").title()
+# 2. Stream Endpoint: Tracks selected media stream requests
+@app.get("/stream/series/{video_id}.json")
+@app.get("/stream/series/{video_id}")
+def get_stream(video_id: str):
+    # Cleans trailing routing artifacts from the request string
+    clean_video_id = video_id.replace(".json", "")
     
-    return {
-        "meta": {
-            "id": f"bs_{clean_id}",
-            "type": "series",
-            "name": human_readable_title,
-            "poster": FAVICON,
-            "background": FAVICON,
-            "description": "Click any available player link below to launch direct video playback."
-        }
-    }
-
-# 3. Stream Engine: Intercepts raw video sources to trigger internal Nuvio video playback
-@app.get("/stream/series/{meta_id}.json")
-@app.get("/stream/series/{meta_id}")
-def get_stream(meta_id: str):
-    clean_id = meta_id.replace(".json", "").replace("bs_", "")
-    target_video_page = f"{BASE_URL}/{clean_id}/"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    # Fallback default source landing page if video matching parameters drop
+    target_page_url = BASE_URL
     
     streams = []
     try:
-        response = requests.get(target_video_page, headers=headers, timeout=8)
-        if response.status_code == 200:
-            html_content = response.text
-            soup = BeautifulSoup(html_content, "html.parser")
+        # If Nuvio requests using a native IMDb identifier format (e.g. tt1234567:1:1)
+        if ":" in clean_video_id:
+            parts = clean_video_id.split(":")
+            imdb_id = parts[0]
+            # Fetch the actual show title from Cinemeta using its IMDb ID to reconnect with the web source path
+            meta_lookup = requests.get(f"https://strem.io{imdb_id}.json", timeout=5)
+            if meta_lookup.status_code == 200:
+                show_name = meta_lookup.json().get("meta", {}).get("name", "")
+                slug = show_name.lower().replace(" ", "-")
+                target_page_url = f"{BASE_URL}/{slug}/"
+        else:
+            # Handles internal backup fallback slug tags
+            slug = clean_video_id.replace("bs_", "")
+            target_page_url = f"{BASE_URL}/{slug}/"
 
-            # Match hidden streaming media file pointers (.mp4 / .m3u8 structures) inside javascript logic
-            raw_media_links = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4)[^\s"\']*)', html_content)
-            for idx, file_url in enumerate(set(raw_media_links)):
+        response = requests.get(target_page_url, headers=SESSION_HEADERS, timeout=10)
+        if response.status_code == 200:
+            html_text = response.text
+            soup = BeautifulSoup(html_text, "html.parser")
+            
+            # Deep Scan: Uncovers hidden underlying video media addresses
+            found_urls = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4|webm)[^\s"\']*)', html_text)
+            for idx, media_url in enumerate(set(found_urls)):
+                if any(x in media_url for x in ["favicon", "logo", "wp-content"]):
+                    continue
                 streams.append({
                     "name": "⚡ AUTO-PLAY",
-                    "title": f"Native Auto-Stream {idx + 1} (Direct File)",
-                    "url": file_url
+                    "title": f"Native Video Playback Stream {idx + 1}",
+                    "url": media_url
                 })
-
-            # Check standard raw HTML video elements
-            for index, video in enumerate(soup.find_all("video")):
-                src = video.get("src")
-                if src and "http" in src:
-                    streams.append({"name": "🎬 NATIVE", "title": f"Source Player Track {index + 1}", "url": src})
-                for source in video.find_all("source"):
-                    src_url = source.get("src")
-                    if src_url and "http" in src_url:
-                        streams.append({"name": "🎬 NATIVE", "title": f"Stream Track Quality ({source.get('res', 'Default')})", "url": src_url})
-
-            # Extract iframe references to allow mirrors to operate
+                
+            # Mirror frame fallback scraping layer
             for idx, iframe in enumerate(soup.find_all("iframe")):
-                iframe_src = iframe.get("src", "")
-                if "http" in iframe_src:
+                src = iframe.get("src", "")
+                if "http" in src:
                     streams.append({
-                        "name": "🔗 MIRROR",
-                        "title": f"External Video Server Frame {idx + 1}",
-                        "url": iframe_src
+                        "name": "🎬 LINK PLAYER",
+                        "title": f"External Video Source Mirror {idx + 1}",
+                        "url": src
                     })
     except Exception as e:
-        print(f"Playback router tracking mismatch: {e}")
+        print(f"Stream resolution matching failure: {e}")
 
-    # Fallback element so you can still open the browser frame manually if bot scripts block parsing
     if not streams:
         streams.append({
-            "name": "🌐 WEB VIEW",
-            "title": "Launch Direct Video Web View Page",
-            "url": target_video_page
+            "name": "🌐 WEB FALLBACK",
+            "title": "Open Original Video Source Web Link",
+            "url": target_page_url
         })
         
     return {"streams": streams}
