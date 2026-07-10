@@ -1,7 +1,6 @@
 import os
 import re
 import requests
-import base64
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -75,8 +74,8 @@ def parse_catalog_page(url: str):
 @app.get("/manifest.json")
 def get_manifest():
     return {
-        "id": "community.brokensilenze.cinematicpro",
-        "version": "15.0.0",
+        "id": "community.brokensilenze.workspace",
+        "version": "16.0.0",
         "name": "BS Seamless Engine Pro",
         "description": "True episodic structures utilizing isolated embedded media links for player stability.",
         "types": ["series"],
@@ -100,7 +99,7 @@ def get_catalog(catalog_id: str, skip: int = Query(0)):
     target_url = BASE_URL if page_number == 1 else f"{BASE_URL}/page/{page_number}/"
     return {"metas": parse_catalog_page(target_url)}
 
-# 2. META ENDPOINT - Populates the exact visual layout with structural grids
+# 2. META ENDPOINT
 @app.get("/meta/series/{meta_id}.json")
 @app.get("/meta/series/{meta_id}")
 def get_meta(meta_id: str):
@@ -164,7 +163,7 @@ def get_meta(meta_id: str):
         }
     }
 
-# 3. STREAM ENDPOINT - SECURE HYBRID DIRECT IN-APP PLAYER ENGINE
+# 3. STREAM ENDPOINT - FORCES IN-APP INTERACTIVE WEB VIEW ENGINE
 @app.get("/stream/series/{video_id}.json")
 @app.get("/stream/series/{video_id}")
 def get_stream(video_id: str):
@@ -176,7 +175,6 @@ def get_stream(video_id: str):
         response = requests.get(target_page_url, headers=SESSION_HEADERS, timeout=10)
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, "html.parser")
-            # Pull every third-party embed player element found on the target layout
             for iframe in soup.find_all("iframe"):
                 i_src = iframe.get("src")
                 if i_src:
@@ -184,46 +182,26 @@ def get_stream(video_id: str):
                         i_src = "https:" + i_src
                     iframe_links.append(i_src)
     except Exception as e:
-        print(f"Stream generation mapping error: {e}")
+        print(f"Stream interface extraction error: {e}")
 
     streams = []
     
-    # Process iframe list into clean, strict Stremio 'url' formats
-    for idx, raw_player_url in enumerate(iframe_links):
-        clean_player_url = raw_player_url.split("?")[0] if "?" in raw_player_url else raw_player_url
+    # Map the isolated player mirror links using Stremio/Nuvio's direct URL engine
+    for idx, player_url in enumerate(iframe_links):
+        clean_player_url = player_url.split("?")[0] if "?" in player_url else player_url
         
-        # PROTOCOL INTEGRATION MATRIX: Wraps embed link inside a safe-mode container track.
-        # Uses 'url' parameter so Nuvio initializes it within the native application shell framework.
         streams.append({
-            "name": f"🎬 Server Mirror {idx + 1}",
+            "name": f"🎬 Server Player {idx + 1}",
             "title": "Launch Direct Video Native Playback",
-            "url": clean_player_url,
-            "behaviorHints": {
-                "notWebReady": True,
-                "proxyHeaders": {
-                    "request": {
-                        "User-Agent": SESSION_HEADERS["User-Agent"],
-                        "Referer": BASE_URL + "/"
-                    }
-                }
-            }
+            "url": clean_player_url
         })
 
-    # Absolute safe fallback baseline using the primary post slug tracking URL
+    # Absolute safe backup block passing the primary episode page URL
     if not streams:
         streams.append({
-            "name": "🎬 Fallback Link",
+            "name": "🎬 Fallback Player",
             "title": "Default Video Stream Track",
-            "url": target_page_url,
-            "behaviorHints": {
-                "notWebReady": True,
-                "proxyHeaders": {
-                    "request": {
-                        "User-Agent": SESSION_HEADERS["User-Agent"],
-                        "Referer": BASE_URL + "/"
-                    }
-                }
-            }
+            "url": target_page_url
         })
         
     return {"streams": streams}
