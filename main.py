@@ -50,7 +50,6 @@ def parse_complete_catalog(url: str):
             clean_slug = post_url.rstrip("/").split("/")[-1]
             scraped_img = img_tag.get("src") or img_tag.get("data-src") or FAVICON
             
-            # FORCE TYPE MOVIE: Tells Nuvio to load the stream instantly using the scraped preview image
             metas.append({
                 "id": f"bs_{clean_slug}",
                 "type": "movie",
@@ -60,17 +59,17 @@ def parse_complete_catalog(url: str):
                 "description": f"Direct link to player source for {raw_title}."
             })
     except Exception as e:
-        print(f"Catalog layout iteration issue: {e}")
+        print(f"Catalog collection error: {e}")
     return metas
 
 @app.get("/manifest.json")
 def get_manifest():
     return {
-        "id": "community.brokensilenze.moviestyle",
-        "version": "6.0.0",
-        "name": "BS Seamless Video Addon",
-        "description": "Natively listings and plays individual episode web streams instantly.",
-        "types": ["movie"], # Changed to movie type to support direct click-to-play streaming
+        "id": "community.brokensilenze.fixedmovie",
+        "version": "6.5.0",
+        "name": "BS Seamless Movie Addon",
+        "description": "Natively parses episode cover art and handles iframe streaming players.",
+        "types": ["movie"],
         "catalogs": [
             {
                 "type": "movie",
@@ -82,7 +81,7 @@ def get_manifest():
         "resources": ["catalog", "meta", "stream"]
     }
 
-# 1. CATALOG ENDPOINT: Handles infinite scrolling through old updates page-by-page
+# 1. CATALOG ENDPOINT: Multi-page scrolling
 @app.get("/catalog/movie/{catalog_id}.json")
 @app.get("/catalog/movie/{catalog_id}")
 def get_catalog(catalog_id: str, skip: int = Query(0)):
@@ -91,25 +90,38 @@ def get_catalog(catalog_id: str, skip: int = Query(0)):
     target_url = BASE_URL if page_number == 1 else f"{BASE_URL}/page/{page_number}/"
     return {"metas": parse_complete_catalog(target_url)}
 
-# 2. META ENDPOINT: Passes the direct thumbnail and title metadata cleanly
+# 2. META ENDPOINT: FIXED - Pulls the real background image dynamically from the post page
 @app.get("/meta/movie/{meta_id}.json")
 @app.get("/meta/movie/{meta_id}")
 def get_meta(meta_id: str):
     clean_id = meta_id.replace(".json", "").replace("bs_", "")
     display_title = clean_id.replace("-", " ").title()
     
+    # Scrapes the show's actual page to grab the high-quality banner image
+    target_page_url = f"{BASE_URL}/{clean_id}/"
+    extracted_art = FAVICON
+    try:
+        res = requests.get(target_page_url, headers=SESSION_HEADERS, timeout=6)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, "html.parser")
+            img_tag = soup.find("img")
+            if img_tag:
+                extracted_art = img_tag.get("src") or img_tag.get("data-src") or FAVICON
+    except Exception:
+        pass
+    
     return {
         "meta": {
             "id": f"bs_{clean_id}",
             "type": "movie",
             "name": display_title,
-            "poster": FAVICON,
-            "background": FAVICON,
-            "description": f"Stream links parsed dynamically from target webpage container: {display_title}"
+            "poster": extracted_art,
+            "background": extracted_art,
+            "description": f"Video stream tracking active for webpage entry: {display_title}"
         }
     }
 
-# 3. STREAM ENDPOINT: Maps direct video streams to trigger immediate player loading
+# 3. STREAM ENDPOINT: FIXED - Handles iframe structures safely
 @app.get("/stream/movie/{video_id}.json")
 @app.get("/stream/movie/{video_id}")
 def get_stream(video_id: str):
@@ -123,35 +135,35 @@ def get_stream(video_id: str):
             html_text = response.text
             soup = BeautifulSoup(html_text, "html.parser")
             
-            # Deep Scan: Pulls hidden streaming asset links (.m3u8 / .mp4 links)
+            # Extract direct raw video paths if visible (.mp4 or .m3u8)
             found_urls = re.findall(r'(https?://[^\s"\']+\.(?:m3u8|mp4|webm)[^\s"\']*)', html_text)
             for idx, media_url in enumerate(set(found_urls)):
                 if any(x in media_url for x in ["favicon", "logo", "wp-content"]):
                     continue
                 streams.append({
                     "name": "⚡ AUTO-PLAY",
-                    "title": f"Native Playback Server Link {idx + 1}",
+                    "title": f"Direct Stream Channel Source {idx + 1}",
                     "url": media_url
                 })
                 
-            # Mirror frame fallback scraping layer
+            # Extract iframe embeds and format them safely
             for idx, iframe in enumerate(soup.find_all("iframe")):
                 src = iframe.get("src", "")
                 if "http" in src:
                     streams.append({
                         "name": "🎬 LINK PLAYER",
-                        "title": f"External Source Mirror {idx + 1}",
+                        "title": f"Video Server Mirror Server {idx + 1}",
                         "url": src
                     })
     except Exception as e:
-        print(f"Deep movie stream resolver failure: {e}")
+        print(f"Streaming link node extractor error: {e}")
 
-    if not streams:
-        streams.append({
-            "name": "🌐 WEB VIEW",
-            "title": "Launch Direct Video Web View Page",
-            "url": target_page_url
-        })
+    # Fallback Option: Allows Nuvio to trigger its built-in external player engine
+    streams.append({
+        "name": "🌐 WEB PLAYER",
+        "title": "Launch Direct Video Web View Page",
+        "externalUrl": target_page_url
+    })
         
     return {"streams": streams}
-            
+    
